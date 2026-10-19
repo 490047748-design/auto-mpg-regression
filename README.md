@@ -13,7 +13,8 @@ feature/* → dev → staging → main
 - 阶段二：模型训练、MLflow 实验对比与模型导出完成。
 - 阶段三：FastAPI 预测接口和网页表单完成本地验证。
 - 阶段四：模型契约、接口边界和应用调用流程测试完成，71 项测试通过。
-- GitHub Actions、Docker 和云端部署尚未完成。
+- 阶段五：Docker 镜像构建与本地容器运行验证完成。
+- GitHub Actions 和云端部署尚未完成。
 
 ## 本地启动
 
@@ -150,3 +151,76 @@ export MODEL_VERSION=6
 也不代表模型对任意车辆都能准确预测。
 
 测试输出仍有一条测试客户端依赖的弃用警告，未造成失败。
+
+## Docker 构建与运行
+
+以下命令在项目根目录执行，需要 Docker 引擎已启动并使用 Linux 容器。
+
+### 构建镜像
+
+```bash
+docker build --build-arg APP_ENV=development --build-arg MODEL_VERSION=6 -t mpg-app:local .
+```
+
+镜像基于 python:3.12-slim，先安装依赖，再复制应用代码。
+使用现有 requirements.txt，包含训练相关依赖，尚未拆分最小推理依赖。
+
+模型文件随 app/ 目录一起进入镜像。
+启动时不需要连接 MLflow、Azure 或下载训练数据。
+
+### 首次创建并启动容器
+
+```bash
+docker run -d --name mpg-app -p 127.0.0.1:8002:8000 mpg-app:local
+```
+
+本机 8002 端口映射到容器内部 8000 端口。
+容器内部监听 0.0.0.0，对外映射仅绑定本机 127.0.0.1。
+
+访问地址：
+- 网页：http://127.0.0.1:8002/
+- 接口文档：http://127.0.0.1:8002/docs
+- 健康检查：http://127.0.0.1:8002/health
+- 模型信息：http://127.0.0.1:8002/model-info
+
+/predict 只接受 POST。直接在浏览器地址栏访问会发送 GET，
+因此可能返回 Method Not Allowed。可通过网页表单或 /docs 发起预测。
+
+### 查看状态和日志
+
+```bash
+docker ps --filter name=mpg-app
+docker logs mpg-app
+docker exec mpg-app id
+```
+
+运行用户应为 uid=10001(appuser)，不是 root。
+
+### 停止和再次启动已有容器
+
+```bash
+docker stop mpg-app
+docker start mpg-app
+```
+
+已有同名容器时，使用 docker start，不重复执行 docker run。
+重新构建镜像不会自动更新已有容器；应用新镜像需要重新创建容器。
+
+### 已完成的本地验证
+
+- Docker 镜像构建成功。
+- /health 返回正常状态。
+- /model-info 返回 model_version=6、app_env=development。
+- 固定样本预测返回 HTTP 200，约为 29.16 mpg。
+- 网页表单能够提交并展示相同预测结果。
+- weight=-5 返回 422，错误位置指向 weight。
+- model_year=2082 返回 422，错误位置指向 model_year。
+- 容器以 uid=10001 运行。
+- 容器 /app 中存在模型文件。
+- 容器 /app 下未发现 data、tests、.git、.dvc、.venv、
+  mlruns、mlflow.db，也未发现 .env 配置文件。
+
+.dockerignore 排除本地数据、虚拟环境、实验记录和配置文件。
+上述文件检查针对容器中的项目目录，不代表完成了全面安全审计。
+
+本阶段完成本地容器验证，尚未发布镜像或部署到云端。
