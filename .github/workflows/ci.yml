@@ -45,3 +45,59 @@ jobs:
             --build-arg APP_ENV=ci \
             --build-arg MODEL_VERSION=6 \
             -t mpg-app:ci .
+
+  build-staging:
+    name: Build staging image
+    needs: ci
+    if: github.event_name == 'push' && github.ref == 'refs/heads/staging'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      APP_ENV: staging
+      MODEL_VERSION: ${{ secrets.STAGING_MODEL_VERSION }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Validate configuration
+        run: |
+          if [ -z "$MODEL_VERSION" ]; then
+            echo "::error::STAGING_MODEL_VERSION is not configured"
+            exit 1
+          fi
+
+      - name: Build staging image
+        run: |
+          docker build \
+            --build-arg APP_ENV="$APP_ENV" \
+            --build-arg MODEL_VERSION="$MODEL_VERSION" \
+            -t mpg-app:staging .
+
+  build-production:
+    name: Build production image
+    needs: ci
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      APP_ENV: production
+      MODEL_VERSION: ${{ secrets.PRODUCTION_MODEL_VERSION }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Validate configuration
+        run: |
+          if [ -z "$MODEL_VERSION" ]; then
+            echo "::error::PRODUCTION_MODEL_VERSION is not configured"
+            exit 1
+          fi
+
+      - name: Build production image
+        run: |
+          docker build \
+            --build-arg APP_ENV="$APP_ENV" \
+            --build-arg MODEL_VERSION="$MODEL_VERSION" \
+            -t mpg-app:production .
