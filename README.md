@@ -14,7 +14,77 @@ feature/* → dev → staging → main
 - 阶段三：FastAPI 预测接口和网页表单完成本地验证。
 - 阶段四：模型契约、接口边界和应用调用流程测试完成，71 项测试通过。
 - 阶段五：Docker 镜像构建与本地容器运行验证完成。
-- GitHub Actions 和云端部署尚未完成。
+- 阶段六：GitHub Actions CI、分支保护及 staging / production 镜像构建验证完成。
+- 阶段七：交付文档与本地验收已完成，分支发布状态以对应 PR 和 Actions 记录为准。
+
+课程交付范围到镜像构建为止。目前没有发布镜像或部署云端服务。
+完整环境说明与验收证据见 [DEPLOYMENT.md](DEPLOYMENT.md)。
+
+## 新环境安装
+
+需要 Python 3.12；以下为 Windows Git Bash 命令。在项目根目录执行：
+
+```bash
+py -3.12 -m venv .venv
+./.venv/Scripts/python.exe -m pip install -r requirements-dev.txt
+```
+
+已有虚拟环境时无需重复创建。导出模型已进入 Git，运行预测和现有测试不要求
+下载 DVC 数据或连接 MLflow；重新训练需要恢复数据并配置相应工具，见下方数据文档。
+
+## CI 与代码流转
+
+工作流定义：[.github/workflows/ci.yml](.github/workflows/ci.yml)。
+
+| 事件 | 实际执行的任务 | 内容 |
+|---|---|---|
+| PR 目标为 dev / staging / main | ci | Ruff、全部测试、构建 mpg-app:ci |
+| push 到 dev | ci | 同上 |
+| push 到 staging | ci → build-staging | ci 成功后构建 mpg-app:staging |
+| push 到 main | ci → build-production | ci 成功后构建 mpg-app:production |
+| push 到 feature/*，没有关联 PR | 无 | 当前工作流不监听功能分支 push |
+
+向已开 PR 的功能分支推送提交，会触发该 PR 的更新检查。
+PR 中两个环境构建任务按条件跳过；环境任务设置 needs: ci，必须等待 ci 成功。
+
+```text
+feature/* 提交并推送
+  → PR 到 dev → ci: lint → test → Docker build → 合并 dev
+  → PR: dev 到 staging → ci 通过 → 合并 staging
+  → push staging: ci → staging 镜像构建
+  → PR: staging 到 main → ci 通过 → 合并 main
+  → push main: ci → production 镜像构建
+```
+
+dev、staging、main 均已配置分支保护：要求 PR、必需检查 ci、分支保持最新，
+管理员也不得绕过；当前单人流程不要求人工批准，不要求线性历史。
+这些设置位于 GitHub 仓库设置中，不由 YAML 自动创建，复制仓库时需要重新配置。
+已观察到检查等待期间合并被阻止；未额外执行故意失败的 CI 演练。
+
+## 数据、模型与目录导航
+
+数据来自 UCI Auto MPG。DVC 管理原始 v1 与清洗 v2，远程存储为 Azure；
+训练使用 v1，填补和标准化在训练数据或交叉验证训练折内部拟合，避免预处理泄漏。
+当前模型为 AutoMPG_LinearRegression 版本 6，测试 RMSE 约 3.2691 mpg，
+MAE 约 2.4890 mpg，R² 约 0.7906。
+
+| 路径 | 用途 |
+|---|---|
+| app/ | FastAPI、请求校验、特征转换、网页及导出模型 |
+| ml/ | 数据处理、训练、划分、实验与溯源文档 |
+| data/*.dvc | 两版数据的 DVC 指针，实际 CSV 不进入 Git |
+| tests/unit/ | 数据处理、划分、建模及模型契约测试 |
+| tests/api/test_api.py | HTTP 接口与输入边界测试 |
+| tests/integration/test_flow.py | 应用调用流程测试 |
+| .github/workflows/ci.yml | CI 与分环境镜像构建 |
+| Dockerfile / .dockerignore | 镜像构建与上下文排除规则 |
+| .env.example | 配置说明模板，不包含凭证 |
+
+- [数据版本说明](ml/README_data.md)
+- [实验对比与选型](ml/README_experiments.md)
+- [当前模型登记卡](ml/registry/current_model.md)
+- [数据—代码—模型溯源](ml/PROVENANCE.md)
+- [构建与交付说明](DEPLOYMENT.md)
 
 ## 本地启动
 
