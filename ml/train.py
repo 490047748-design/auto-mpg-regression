@@ -1,5 +1,7 @@
 """训练 baseline，并用本地 MLflow 保存实验记录。"""
 
+import joblib
+import numpy as np
 from sklearn.model_selection import KFold, cross_val_score
 from ml.modeling import build_improved_model, prepare_improved_features
 
@@ -66,6 +68,7 @@ def train_model(
     stage: str,
     model_type: str = "linear",
     alpha: float = 1.0,
+    export_path: Path | None = None,
 ) -> None:
     """训练并记录 baseline 或 improved 实验。"""
     if git_output("status", "--porcelain"):
@@ -167,13 +170,47 @@ def train_model(
         mlflow.log_figure(fig, "residual_plot.png")
         plt.close(fig)
 
-        mlflow.sklearn.log_model(
+        model_info = mlflow.sklearn.log_model(
             sk_model=model,
             name="model",
             input_example=X_train.head(3),
             registered_model_name="AutoMPG_LinearRegression",
             skops_trusted_types=["numpy.dtype"],
         )
+
+        if export_path is not None:
+            export_path.parent.mkdir(parents=True, exist_ok=True)
+            joblib.dump(model, export_path)
+
+            restored_model = joblib.load(export_path)
+            restored_predictions = restored_model.predict(X_test)
+
+            np.testing.assert_allclose(
+                predictions,
+                restored_predictions,
+                rtol=1e-10,
+                atol=1e-10,
+            )
+
+            model_sha256 = hashlib.sha256(export_path.read_bytes()).hexdigest()
+
+            mlflow.log_dict(
+                {
+                    "run_id": run.info.run_id,
+                    "code_version": code_version,
+                    "data_version": data_version,
+                    "mlflow_model_uri": model_info.model_uri,
+                    "export_path": str(export_path),
+                    "model_sha256": model_sha256,
+                    "feature_columns": X_train.columns.tolist(),
+                    "roundtrip_verified": True,
+                },
+                "export_manifest.json",
+            )
+
+            print("Exported model:", export_path)
+            print("Model SHA256:", model_sha256)
+            print("Reload check: predictions match")
 
         print("run_id:", run.info.run_id)
         print("code_version:", code_version)
@@ -202,6 +239,12 @@ def main() -> None:
         default="linear",
     )
     parser.add_argument("--alpha", type=float, default=1.0)
+    parser.add_argument(
+        "--export",
+        type=Path,
+        default=None,
+        help="可选：将本次训练模型导出到指定文件",
+    )
     args = parser.parse_args()
 
     if args.stage == "baseline" and args.model_type != "linear":
@@ -216,6 +259,7 @@ def main() -> None:
         args.stage,
         args.model_type,
         args.alpha,
+        args.export,
     )
 
 
