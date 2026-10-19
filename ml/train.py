@@ -60,7 +60,13 @@ def data_fingerprint(data_path: Path) -> str:
     return expected
 
 
-def train_model(data_path: Path, run_name: str, stage: str) -> None:
+def train_model(
+    data_path: Path,
+    run_name: str,
+    stage: str,
+    model_type: str = "linear",
+    alpha: float = 1.0,
+) -> None:
     """训练并记录 baseline 或 improved 实验。"""
     if git_output("status", "--porcelain"):
         raise RuntimeError("请先提交代码并保持工作区干净，再正式记录实验")
@@ -79,7 +85,7 @@ def train_model(data_path: Path, run_name: str, stage: str) -> None:
     else:
         X_train = prepare_improved_features(train)
         X_test = prepare_improved_features(test)
-        model = build_improved_model()
+        model = build_improved_model(model_type=model_type, alpha=alpha)
 
     y_train = train["mpg"]
     y_test = test["mpg"]
@@ -98,7 +104,7 @@ def train_model(data_path: Path, run_name: str, stage: str) -> None:
 
         mlflow.log_params(
             {
-                "model_type": "linear",
+                "model_type": model_type,
                 "scale": stage == "improved",
                 "test_size": 0.2,
                 "random_state": 42,
@@ -108,6 +114,8 @@ def train_model(data_path: Path, run_name: str, stage: str) -> None:
                 "data_path": str(data_path),
             }
         )
+        if model_type == "ridge":
+            mlflow.log_param("alpha", alpha)
 
         if stage == "improved":
             cv = KFold(n_splits=5, shuffle=True, random_state=42)
@@ -188,9 +196,27 @@ def main() -> None:
         choices=["baseline", "improved"],
         default="baseline",
     )
+    parser.add_argument(
+        "--model-type",
+        choices=["linear", "ridge"],
+        default="linear",
+    )
+    parser.add_argument("--alpha", type=float, default=1.0)
     args = parser.parse_args()
 
-    train_model(args.data, args.run_name, args.stage)
+    if args.stage == "baseline" and args.model_type != "linear":
+        parser.error("本课程 baseline 固定使用 linear；Ridge 请搭配 --stage improved")
+
+    if args.model_type == "ridge" and not 0 < args.alpha < float("inf"):
+        parser.error("--alpha 必须是有限正数")
+
+    train_model(
+        args.data,
+        args.run_name,
+        args.stage,
+        args.model_type,
+        args.alpha,
+    )
 
 
 if __name__ == "__main__":

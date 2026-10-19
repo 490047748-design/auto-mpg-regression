@@ -1,5 +1,6 @@
 """验证 improved 特征和训练预处理的行为。"""
 
+import pytest
 import numpy as np
 import pandas as pd
 
@@ -51,3 +52,25 @@ def test_prediction_reuses_training_median():
     assert filled_test[1, 0] == 20.0
     assert imputer.statistics_[0] == 20.0
     assert np.isfinite(predictions).all()
+
+
+def test_ridge_shrinks_coefficients_on_simple_data():
+    X = pd.DataFrame({"horsepower": [10.0, 20.0, 30.0, 40.0]})
+    y = pd.Series([1.0, 2.0, 3.0, 4.0])
+
+    linear = build_improved_model(model_type="linear")
+    ridge = build_improved_model(model_type="ridge", alpha=10.0)
+
+    linear.fit(X, y)
+    ridge.fit(X, y)
+
+    linear_size = np.linalg.norm(linear.named_steps["regressor"].coef_)
+    ridge_size = np.linalg.norm(ridge.named_steps["regressor"].coef_)
+
+    assert ridge_size < linear_size
+    assert np.isfinite(ridge.predict(X)).all()
+
+
+def test_ridge_rejects_negative_alpha():
+    with pytest.raises(ValueError, match="alpha"):
+        build_improved_model(model_type="ridge", alpha=-1.0)

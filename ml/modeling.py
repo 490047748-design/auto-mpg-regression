@@ -2,7 +2,7 @@
 
 import pandas as pd
 from sklearn.impute import SimpleImputer
-from sklearn.linear_model import LinearRegression
+from sklearn.linear_model import LinearRegression, Ridge
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
@@ -21,12 +21,24 @@ def prepare_improved_features(data: pd.DataFrame) -> pd.DataFrame:
     return prepared[V2_FEATURE_COLUMNS].copy()
 
 
-def build_improved_model() -> Pipeline:
-    """将中位数填补、标准化、线性回归封装为一个模型。"""
+def build_improved_model(
+    model_type: str = "linear",
+    alpha: float = 1.0,
+) -> Pipeline:
+    """构建预处理流程，并选择线性回归或 Ridge。"""
+    if model_type == "linear":
+        regressor = LinearRegression()
+    elif model_type == "ridge":
+        if not 0 < alpha < float("inf"):
+            raise ValueError("Ridge 的 alpha 必须是有限正数")
+        regressor = Ridge(alpha=alpha)
+    else:
+        raise ValueError(f"不支持的模型类型: {model_type}")
+
     return Pipeline(
         steps=[
             ("imputer", SimpleImputer(strategy="median")),
             ("scaler", StandardScaler()),
-            ("regressor", LinearRegression()),
+            ("regressor", regressor),
         ]
     )
