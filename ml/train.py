@@ -1,5 +1,8 @@
 """训练 baseline，并用本地 MLflow 保存实验记录。"""
 
+from sklearn.model_selection import KFold, cross_val_score
+from ml.modeling import build_improved_model, prepare_improved_features
+
 import argparse
 import hashlib
 from pathlib import Path
@@ -57,8 +60,8 @@ def data_fingerprint(data_path: Path) -> str:
     return expected
 
 
-def train_baseline(data_path: Path, run_name: str) -> None:
-    """训练并记录一次可追溯的 baseline 实验。"""
+def train_model(data_path: Path, run_name: str, stage: str) -> None:
+    """训练并记录 baseline 或 improved 实验。"""
     if git_output("status", "--porcelain"):
         raise RuntimeError("请先提交代码并保持工作区干净，再正式记录实验")
 
@@ -67,11 +70,18 @@ def train_baseline(data_path: Path, run_name: str) -> None:
 
     data = pd.read_csv(data_path)
     train, test = split_records(data, test_size=0.2, random_state=42)
-    train = train.dropna(subset=["horsepower"])
 
-    X_train = train[FEATURES]
+    if stage == "baseline":
+        train = train.dropna(subset=["horsepower"])
+        X_train = train[FEATURES]
+        X_test = test[FEATURES]
+        model = LinearRegression()
+    else:
+        X_train = prepare_improved_features(train)
+        X_test = prepare_improved_features(test)
+        model = build_improved_model()
+
     y_train = train["mpg"]
-    X_test = test[FEATURES]
     y_test = test["mpg"]
 
     mlflow.set_tracking_uri("sqlite:///mlflow.db")
@@ -82,26 +92,46 @@ def train_baseline(data_path: Path, run_name: str) -> None:
             {
                 "code_version": code_version,
                 "data_version": data_version,
-                "stage": "baseline",
+                "stage": stage,
             }
         )
 
         mlflow.log_params(
             {
                 "model_type": "linear",
-                "scale": False,
+                "scale": stage == "improved",
                 "test_size": 0.2,
                 "random_state": 42,
                 "n_train": len(train),
                 "n_test": len(test),
-                "n_features": len(FEATURES),
+                "n_features": X_train.shape[1],
                 "data_path": str(data_path),
             }
         )
 
-        model = LinearRegression()
+        if stage == "improved":
+            cv = KFold(n_splits=5, shuffle=True, random_state=42)
+            scores = cross_val_score(
+                model,
+                X_train,
+                y_train,
+                cv=cv,
+                scoring="neg_root_mean_squared_error",
+            )
+            cv_rmse = float(-scores.mean())
+
+            mlflow.log_param("cv_folds", 5)
+            mlflow.log_metric("cv_rmse", cv_rmse)
+            print(f"CV RMSE: {cv_rmse:.4f}")
+
         model.fit(X_train, y_train)
         predictions = model.predict(X_test)
+
+        if stage == "improved":
+            horsepower_position = X_train.columns.get_loc("horsepower")
+            median = float(model.named_steps["imputer"].statistics_[horsepower_position])
+            mlflow.log_param("train_horsepower_median", median)
+            print(f"Training horsepower median: {median:.1f}")
 
         metrics = {
             "rmse": float(root_mean_squared_error(y_test, predictions)),
@@ -110,12 +140,21 @@ def train_baseline(data_path: Path, run_name: str) -> None:
         }
         mlflow.log_metrics(metrics)
 
+        mlflow.log_dict(
+            {
+                "train_indices": train.index.tolist(),
+                "test_indices": test.index.tolist(),
+                "feature_columns": X_train.columns.tolist(),
+            },
+            "split_and_features.json",
+        )
+
         fig, ax = plt.subplots()
         ax.scatter(predictions, y_test.to_numpy() - predictions, alpha=0.7)
         ax.axhline(0, color="red", linestyle="--")
         ax.set_xlabel("Predicted MPG")
         ax.set_ylabel("Residual (actual - predicted)")
-        ax.set_title("Baseline residuals")
+        ax.set_title(f"{stage.capitalize()} residuals")
         fig.tight_layout()
         mlflow.log_figure(fig, "residual_plot.png")
         plt.close(fig)
@@ -125,6 +164,7 @@ def train_baseline(data_path: Path, run_name: str) -> None:
             name="model",
             input_example=X_train.head(3),
             registered_model_name="AutoMPG_LinearRegression",
+            skops_trusted_types=["numpy.dtype"],
         )
 
         print("run_id:", run.info.run_id)
@@ -143,9 +183,14 @@ def main() -> None:
         default=Path("data/auto_mpg_v1.csv"),
     )
     parser.add_argument("--run-name", default="baseline-v1")
+    parser.add_argument(
+        "--stage",
+        choices=["baseline", "improved"],
+        default="baseline",
+    )
     args = parser.parse_args()
 
-    train_baseline(args.data, args.run_name)
+    train_model(args.data, args.run_name, args.stage)
 
 
 if __name__ == "__main__":
