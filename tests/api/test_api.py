@@ -86,9 +86,25 @@ def test_predict_valid_input(client):
     [
         ("weight", -5),
         ("weight", 0),
+        ("weight", 6001),
+        ("cylinders", 2),
+        ("cylinders", 13),
+        ("displacement", 0),
+        ("displacement", 1001),
+        ("horsepower", -1),
+        ("horsepower", 0),
         ("horsepower", 601),
-        ("model_year", 1969),
+        ("acceleration", -1),
+        ("acceleration", 0),
+        ("acceleration", 41),
+        ("origin", 0),
         ("origin", 4),
+        ("model_year", 1969),
+        ("model_year", 1983),
+        ("model_year", 2000),
+        ("model_year", 2050),
+        ("model_year", 2082),
+        ("model_year", 2101),
     ],
 )
 def test_predict_rejects_invalid_values(client, field, value):
@@ -131,3 +147,44 @@ def test_startup_fails_without_model(monkeypatch, tmp_path):
     with pytest.raises(FileNotFoundError, match="模型文件不存在"):
         with TestClient(app):
             pass
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("weight", "not-a-number"),
+        ("horsepower", None),
+        ("cylinders", 4.5),
+        ("origin", [1]),
+        ("model_year", "unknown"),
+    ],
+)
+def test_predict_rejects_invalid_types(client, field, value):
+    """错误类型应返回 422，并指出具体字段。"""
+    payload = {**VALID_PAYLOAD, field: value}
+    response = client.post("/predict", json=payload)
+
+    assert response.status_code == 422
+    assert any(error["loc"] == ["body", field] for error in response.json()["detail"])
+
+
+@pytest.mark.parametrize("year", [1970, 1982])
+def test_predict_accepts_year_boundaries(client, year):
+    """合法年份的两个端点都应被接受。"""
+    payload = {**VALID_PAYLOAD, "model_year": year}
+    response = client.post("/predict", json=payload)
+
+    assert response.status_code == 200
+    assert isinstance(response.json()["mpg"], (int, float))
+
+
+def test_predict_rejects_malformed_json(client):
+    """JSON 缺少逗号时，应返回解析错误，而不是服务器错误。"""
+    response = client.post(
+        "/predict",
+        content='{"weight": -5 "origin": 1}',
+        headers={"Content-Type": "application/json"},
+    )
+
+    assert response.status_code == 422
+    assert any(error["type"] == "json_invalid" for error in response.json()["detail"])
