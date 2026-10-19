@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Auto MPG 预测</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: #f1f5f9;
+      color: #172033;
+      font-family: system-ui, sans-serif;
+    }
+    main {
+      max-width: 720px;
+      margin: 48px auto;
+      padding: 28px;
+      background: white;
+      border-radius: 16px;
+    }
+    h1 { margin-top: 0; }
+    p { color: #475569; line-height: 1.7; }
+    .fields {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+    }
+    label { display: grid; gap: 8px; }
+    input, select, button {
+      padding: 12px;
+      border: 1px solid #94a3b8;
+      border-radius: 8px;
+      font: inherit;
+    }
+    button {
+      width: 100%;
+      margin-top: 24px;
+      background: #1d4ed8;
+      color: white;
+      border: none;
+      cursor: pointer;
+    }
+    button:disabled { opacity: 0.6; cursor: wait; }
+    #result {
+      margin-top: 20px;
+      padding: 16px;
+      background: #eff6ff;
+      border-radius: 8px;
+      white-space: pre-wrap;
+    }
+    #result.error { background: #fef2f2; color: #991b1b; }
+    @media (max-width: 540px) {
+      main { margin: 16px; padding: 20px; }
+      .fields { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Auto MPG 预测</h1>
+    <p>填写车辆参数，预测每加仑燃油可行驶的英里数（mpg）。
+      本模型基于 1970—1982 年的汽车数据训练。</p>
+
+    <form id="prediction-form">
+      <div class="fields">
+        <label>气缸数
+          <input name="cylinders" type="number"
+                 min="3" max="12" step="1" value="4" required>
+        </label>
+        <label>排量（立方英寸）
+          <input name="displacement" type="number"
+                 min="0.01" max="1000" step="any" value="120" required>
+        </label>
+        <label>马力（hp）
+          <input name="horsepower" type="number"
+                 min="0.01" max="600" step="any" value="79" required>
+        </label>
+        <label>车重（磅）
+          <input name="weight" type="number"
+                 min="0.01" max="6000" step="any" value="2625" required>
+        </label>
+        <label>加速时间（秒）
+          <input name="acceleration" type="number"
+                 min="0.01" max="40" step="any" value="18.6" required>
+        </label>
+        <label>车型年份
+          <input name="model_year" type="number"
+                 min="1970" max="1982" step="1" value="1982" required>
+        </label>
+        <label>产地
+          <select name="origin">
+            <option value="1">美国</option>
+            <option value="2">欧洲</option>
+            <option value="3">日本</option>
+          </select>
+        </label>
+      </div>
+      <button type="submit" id="submit-button">预测 mpg</button>
+    </form>
+
+    <div id="result" role="status" aria-live="polite">
+      填写参数后点击预测。
+    </div>
+  </main>
+
+  <script>
+    const form = document.getElementById("prediction-form");
+    const button = document.getElementById("submit-button");
+    const result = document.getElementById("result");
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+
+      const payload = {};
+      for (const [name, value] of new FormData(form)) {
+        payload[name] = Number(value);
+      }
+
+      button.disabled = true;
+      result.classList.remove("error");
+      result.textContent = "正在预测……";
+
+      try {
+        const response = await fetch("/predict", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) {
+          let message = `请求失败（HTTP ${response.status}）`;
+          if (response.status === 422) {
+            const data = await response.json();
+            message = Array.isArray(data.detail)
+              ? data.detail.map(
+                  item => `${item.loc.join(".")}：${item.msg}`
+                ).join("\n")
+              : "参数不符合要求，请检查输入。";
+          }
+          throw new Error(message);
+        }
+
+        const data = await response.json();
+        result.textContent =
+          `预测结果：${data.mpg.toFixed(2)} mpg\n` +
+          `模型版本：${data.model_version}`;
+      } catch (error) {
+        result.classList.add("error");
+        result.textContent = `预测失败：${error.message}`;
+      } finally {
+        button.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
